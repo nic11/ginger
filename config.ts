@@ -1,56 +1,98 @@
+import * as z from "zod";
+
 import { decodeB64, encodeB64 } from "./base64";
-import { Locale } from "./strings";
+import { LocaleZod } from "./strings";
 
-export type StepType = 'GO' | 'NOGO' | 'BLOCK';
+const CSS_COLOR_REGEX = /^#?[a-zA-Z0-9().,%\s]+$/;
 
-export interface Resource {
-  type: 'image'; // could expand to 'audio' later
-  src: string;
-  element?: HTMLImageElement;
+const BASE64_IMAGE_REGEX = /^data:image\/(png|jpeg|jpg|svg\+xml);base64,/;
+
+export const StepTypeZod = z.enum(['GO', 'NOGO', 'BLOCK']);
+export type StepType = z.infer<typeof StepTypeZod>;
+
+export const ResourceZod = z.object({
+  type: z.literal('image'),
+  src: z.string().superRefine((val, ctx) => {
+    if (BASE64_IMAGE_REGEX.test(val)) return;
+
+    try {
+      const url = new URL(val);
+
+      const ALLOWED_PROTOCOLS = ['http:', 'https:'];
+      if (!ALLOWED_PROTOCOLS.includes(url.protocol)) {
+        ctx.addIssue({
+          code: 'custom',
+          message: `URL protocol must be http or https. Found: ${url.protocol}`,
+        });
+      }
+    } catch (e) {
+      ctx.addIssue({
+        code: 'custom',
+        message: `Must be a valid HTTP/HTTPS URL or Base64 image data: ${e}`,
+      });
+    }
+  }),
+  element: z.custom<HTMLImageElement>((val) => {
+    return typeof HTMLImageElement !== 'undefined' && val instanceof HTMLImageElement;
+  }).optional(),
+});
+export type Resource = z.infer<typeof ResourceZod>;
+
+export const ParsedStepZod = z.object({
+  type: StepTypeZod,
+  durationMs: z.number().int().positive(),
+  originalString: z.string(),
+});
+export type ParsedStep = z.infer<typeof ParsedStepZod>;
+
+export const StageConfigZod = z.object({
+  name: z.string().min(1),
+  welcomeText: z.string(),
+  totalTimeMs: z.number().int().min(0).optional(),  // absent or 0 for run-once
+  steps: z.array(z.string().regex(/^[GNB][1-9][0-9]*$/)),
+  parsedSteps: z.array(ParsedStepZod).optional(),  // populated on init
+});
+export type StageConfig = z.infer<typeof StageConfigZod>;
+
+export const GingerConfigZod = z.object({
+  lang: LocaleZod,
+
+  textColor: z.string().regex(CSS_COLOR_REGEX).optional(),
+  backgroundColor: z.string().regex(CSS_COLOR_REGEX).optional(),
+  textSize: z.number().positive().optional(),
+
+  welcomeText: z.string(),
+  go: ResourceZod,
+  nogo: ResourceZod,
+  stages: z.array(StageConfigZod).min(1),
+});
+export type GingerConfig = z.infer<typeof GingerConfigZod>;
+
+export const STEP_OUTCOME_VALS = ['HIT', 'MISS', 'FALSE_ALARM', 'CORRECT_REJECTION'] as const;
+export const StepOutcomeValuesZod = z.enum(STEP_OUTCOME_VALS);
+
+export const StepOutcomeZod = z.object({
+  stageIndex: z.number().int().min(0),
+  stepIndex: z.number().int().min(0),
+  type: StepTypeZod,
+  outcome: StepOutcomeValuesZod,
+  responseTimeMs: z.number().positive().nullable(),  // null means no response
+  timestamp: z.number().int().positive(),
+});
+export type StepOutcome = z.infer<typeof StepOutcomeZod>;
+
+export interface ParseResult {
+  config?: GingerConfig;
+  decodedHash?: string;
+  error?: any;
 }
 
-// Parsed step for internal use (much faster than string parsing every time)
-export interface ParsedStep {
-  type: StepType;
-  durationMs: number;
-  originalString: string;
-}
-
-export interface StageConfig {
-  name: string; // "Trial" or "Real"
-  welcomeText: string;
-  totalTimeMs?: number; // absent or 0 for run-once
-  steps: string[];     // Keep string format for easy config writing
-  parsedSteps?: ParsedStep[]; // We populate this on init
-}
-
-export interface GingerConfig {
-  lang: Locale;
-  textColor?: string;  // if present, overrides the default
-  backgroundColor?: string;  // if present, overrides the default
-  textSize?: number;  // if present, overrides the default
-  welcomeText: string;
-  go: Resource;
-  nogo: Resource;
-  stages: StageConfig[];
-}
-
-export const STEP_OUTCOME_VALS = [ 'HIT', 'MISS', 'FALSE_ALARM', 'CORRECT_REJECTION' ] as const;
-
-export interface StepOutcome {
-  stageIndex: number;
-  stepIndex: number;
-  type: StepType;
-  outcome: typeof STEP_OUTCOME_VALS[number];
-  responseTimeMs: number | null; // null if no response (FIXME: is not null in the end)
-  timestamp: number;
-}
-
-export function loadConfigFromUrl(): GingerConfig | undefined {
+export function loadConfigFromUrl(): ParseResult {
+  let result: ParseResult = {};
   try {
     const hash = window.location.hash.slice(1);
     if (!hash) {
-      return undefined;
+      return {};
     }
 
     const v1Prefix = 'v1/';
@@ -58,16 +100,13 @@ export function loadConfigFromUrl(): GingerConfig | undefined {
       throw new Error('invalid prefix');
     }
 
-    const jsonString = decodeB64(hash.substring(v1Prefix.length));
-
-    // TODO: zod and validate
-    const config = JSON.parse(jsonString) as GingerConfig;
-
-    return config;
+    result.decodedHash = decodeB64(hash.substring(v1Prefix.length));
+    result.config = GingerConfigZod.parse(JSON.parse(result.decodedHash));
   } catch (error) {
     console.error(error);
-    return undefined;
+    result.error = error;
   }
+  return result;
 }
 
 export function encodeUrlWithConfig(configStr: string): string {

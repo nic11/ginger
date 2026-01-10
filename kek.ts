@@ -1,5 +1,5 @@
 import { decodeB64, encodeB64 } from './base64';
-import { encodeUrlWithConfig, GingerConfig, loadConfigFromUrl, ParsedStep, Resource, STEP_OUTCOME_VALS, StepOutcome, StepType } from './config';
+import { encodeUrlWithConfig, GingerConfig, GingerConfigZod, loadConfigFromUrl, ParsedStep, ParseResult, Resource, STEP_OUTCOME_VALS, StepOutcome, StepType } from './config';
 import { formatDateNow } from './datetime';
 import { S, setLocale } from './strings';
 
@@ -23,7 +23,7 @@ class GingerEngine {
 
   private hasInteractedInCurrentStep: boolean = false;
 
-  constructor(config: GingerConfig, containerId: string) {
+  constructor(config: GingerConfig, root: HTMLElement) {
     this.config = config;
     this.state = {
       currentStageIndex: -1, // -1 means Intro/Welcome
@@ -32,11 +32,6 @@ class GingerEngine {
       results: [],
       isRunning: false,
     };
-
-    const root = document.getElementById(containerId);
-    if (!root) {
-      throw new Error('Container not found');
-    }
 
     this.stepStartTime = 0;
 
@@ -461,44 +456,134 @@ function addArtifact(el: HTMLElement, title: string, name: string, content: stri
   el.appendChild(container);
 }
 
-window.onload = async () => {
-  const config = loadConfigFromUrl();
-  if (!config) {
-    setLocale('en');
+function renderEditConfigScreen(app: HTMLElement, result: ParseResult) {
+  let { config, decodedHash, error: loadError } = result;
+  const applyStyles = (el: HTMLElement, styles: Object) => Object.assign(el.style, styles);
 
-    const span = document.createElement('span');
-    span.style.fontSize = "24px";
-    span.style.display = "block";
-    span.style.marginBottom = "20px";
-    span.innerText = S().enterConfig;
+  const container = document.createElement('div');
+  applyStyles(container, {
+    fontFamily: 'sans-serif',
+    maxWidth: '800px',
+    margin: '20px auto',
+    padding: '0 10px',
+  });
 
-    const textbox1 = document.createElement('textarea');
-    textbox1.rows = 40;
-    textbox1.cols = 30;
+  const label = document.createElement('label');
+  label.innerText = S().enterConfig;
+  applyStyles(label, { fontSize: '24px', display: 'block', marginBottom: '10px' });
 
-    const span2 = document.createElement('span');
-    span2.style.display = 'block';
-    span2.innerText = S().enterConfigCopy;
+  const configInput = document.createElement('textarea');
+  configInput.rows = 15;
+  if (config) {
+    configInput.value = JSON.stringify(config, null, 2);
+  } else {
+    configInput.value = decodedHash ?? '';
+  }
+  configInput.placeholder = "Paste config here...";
+  applyStyles(configInput, { width: '100%', fontFamily: 'monospace', boxSizing: 'border-box' });
 
-    const textbox2 = document.createElement('textarea');
-    textbox2.rows = 1;
-    textbox2.cols = 60;
+  const validationError = document.createElement('pre');
+  applyStyles(validationError, {
+    color: '#d32f2f',
+    marginTop: '8px',
+    fontSize: '14px',
+    minHeight: '1.5em',
+  });
 
-    textbox1.oninput = (ev) => {
-      console.log(ev);
-      textbox2.innerText = encodeUrlWithConfig(textbox1.value);
+  const outputBox = document.createElement('div');
+  applyStyles(outputBox, {
+    marginTop: '20px',
+    padding: '15px',
+    background: '#0a0a0a',
+    borderRadius: '4px',
+  });
+
+  const copyLabel = document.createElement('label');
+  copyLabel.innerText = S().enterConfigCopy;
+  applyStyles(copyLabel, { display: 'block', marginBottom: '8px', fontWeight: 'bold' });
+
+  const row = document.createElement('div');
+  applyStyles(row, { display: 'flex', gap: '10px' });
+
+  const urlOutput = document.createElement('input');
+  urlOutput.readOnly = true;
+  applyStyles(urlOutput, { flexGrow: '1', padding: '8px' });
+
+  const copyBtn = document.createElement('button');
+  copyBtn.innerText = S().btnCopy;
+  applyStyles(copyBtn, { cursor: 'pointer', padding: '8px 16px' });
+
+  const updateOutput = () => {
+    const setOutputError = (err: any) => {
+      validationError.textContent = `Invalid Config: ${err}`;
+      urlOutput.value = "";
+      copyBtn.disabled = true;
+    };
+    const setOutput = (value: string) => {
+      validationError.textContent = "";
+      urlOutput.value = encodeUrlWithConfig(value);
+      copyBtn.disabled = false;
     };
 
-    document.getElementById('app')?.appendChild(span);
-    document.getElementById('app')?.appendChild(textbox1);
-    document.getElementById('app')?.appendChild(span2);
-    document.getElementById('app')?.appendChild(textbox2);
+    if (loadError) {
+      setOutputError(loadError);
+      loadError = undefined;
+      return;
+    }
+
+    const value = configInput.value.trim();
+    if (!value) {
+      setOutputError('should not be empty');
+      return;
+    }
+
+    try {
+      GingerConfigZod.parse(JSON.parse(value));
+      setOutput(value);
+    } catch (err) {
+      setOutputError(err);
+    }
+  };
+
+  copyBtn.onclick = async () => {
+    if (!urlOutput.value) return;
+    try {
+      await navigator.clipboard.writeText(urlOutput.value);
+      copyBtn.innerText = 'Copied!';
+      setTimeout(() => copyBtn.innerText = S().btnCopy, 1000);
+    } catch (err) {
+      alert('Copy failed!');
+    }
+  };
+
+  configInput.oninput = updateOutput;
+
+  row.append(urlOutput, copyBtn);
+  outputBox.append(copyLabel, row);
+  container.append(label, configInput, validationError, outputBox);
+  app.appendChild(container);
+
+  updateOutput();
+}
+
+window.onload = async () => {
+  const app = document.getElementById('app');
+  if (!app) {
+    alert('Critical error: no app element');
+    return;
+  }
+
+  let result = loadConfigFromUrl();
+  const config = result.config;
+  if (!config) {
+    setLocale('en');
+    renderEditConfigScreen(app, result);
     return;
   }
 
   setLocale(config.lang);
 
-  const engine = new GingerEngine(config, 'app');
+  const engine = new GingerEngine(config, app);
   engine.init();
 
   console.log(config);

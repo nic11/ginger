@@ -1,4 +1,7 @@
-export type Locale = 'en' | 'he';
+import * as z from "zod";
+
+export const LocaleZod = z.enum(['en', 'he']);
+export type Locale = z.infer<typeof LocaleZod>;
 
 const en = {
   notTranslated: '[not translated]',
