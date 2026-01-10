@@ -59,6 +59,6 @@ ${assets.html?.at(0)?.replaceAll('<!', '\\u003C!').replaceAll('-->', '--\\u003E'
 -->
 `;
 
-await Bun.write("./dist/ginger.html", html);
+await Bun.write("../ginger-gh-pages/index.html", html);
 
 export {};
