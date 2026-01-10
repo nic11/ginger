@@ -16,6 +16,7 @@ class GingerEngine {
   private container: HTMLElement;
   private imageElement: HTMLImageElement;
   private textElement: HTMLSpanElement;
+  private settingsBtn: HTMLButtonElement;
   private baseFontSize: number;
   private stepStartTime: number;
 
@@ -40,6 +41,7 @@ class GingerEngine {
     this.baseFontSize = Math.round(+(config.textSize ?? 32) * screen.height / 1080);
 
     this.container = root;
+
     this.textElement = document.createElement('span');
     this.textElement.style.color = config.textColor ?? 'white';
     this.textElement.style.fontSize = `${this.baseFontSize}px`;
@@ -51,12 +53,35 @@ class GingerEngine {
     this.imageElement.style.display = "none";
     this.imageElement.style.maxWidth = "100%";
 
+    this.settingsBtn = document.createElement('button');
+    this.settingsBtn.innerText = '⚙️'; 
+    applyStyles(this.settingsBtn, {
+      position: 'absolute',
+      top: '10px',
+      right: '10px',
+      padding: '8px 8px',
+      fontSize: '20px',
+      cursor: 'pointer',
+      backgroundColor: '#ffffff',
+      border: '1px solid #ddd',
+      borderRadius: '4px',
+      boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+      zIndex: '100',
+      lineHeight: '1',
+    });
+    this.settingsBtn.onclick = () => {
+      this.settingsBtn.style.display = 'none';
+      config.go.element = config.nogo.element = undefined;
+      renderEditConfigScreen(root, { config });
+    };
+
     this.container.appendChild(this.textElement);
     this.container.appendChild(this.imageElement);
+    this.container.appendChild(this.settingsBtn);
 
     this.handleInput = this.handleInput.bind(this);
     document.addEventListener('keydown', this.handleInput);
-    document.addEventListener('mousedown', this.handleInput);
+    // document.addEventListener('mousedown', this.handleInput);
 
     this.parseConfig();
   }
@@ -111,6 +136,7 @@ class GingerEngine {
     this.renderScreen(this.config.welcomeText, null);
 
     this.waitForInput(() => {
+      this.settingsBtn.style.display = 'none';
       this.renderScreen(S().thisIsGo, this.config.go.src);
 
       this.waitForInput(() => {
@@ -201,7 +227,7 @@ class GingerEngine {
   }
 
   private handleInput(e: KeyboardEvent | MouseEvent) {
-    if (e instanceof KeyboardEvent && e.code !== 'Space') {
+    if (e instanceof KeyboardEvent && e.code !== 'Space' && e.code !== 'Enter') {
       return;
     }
 
@@ -456,9 +482,11 @@ function addArtifact(el: HTMLElement, title: string, name: string, content: stri
   el.appendChild(container);
 }
 
+const applyStyles = (el: HTMLElement, styles: Object) => Object.assign(el.style, styles);
+
 function renderEditConfigScreen(app: HTMLElement, result: ParseResult) {
   let { config, decodedHash, error: loadError } = result;
-  const applyStyles = (el: HTMLElement, styles: Object) => Object.assign(el.style, styles);
+  app.innerHTML = '';
 
   const container = document.createElement('div');
   applyStyles(container, {
@@ -558,9 +586,26 @@ function renderEditConfigScreen(app: HTMLElement, result: ParseResult) {
 
   configInput.oninput = updateOutput;
 
+  const seeGithub = document.createElement('label');
+  seeGithub.innerText = S().seeGithub + '\n';
+  applyStyles(seeGithub, {
+    fontSize: '12px',
+    display: 'block',
+    marginTop: '10px',
+    textAlign: 'center',
+  });
+
+  const githubLink = document.createElement('a');
+  githubLink.innerText = githubLink.href = 'https://github.com/nic11/ginger/blob/master/strings.ts';
+  githubLink.target = '_blank';
+  applyStyles(githubLink, {
+    color: '#ffffff',
+  });
+  seeGithub.append(githubLink);
+
   row.append(urlOutput, copyBtn);
   outputBox.append(copyLabel, row);
-  container.append(label, configInput, validationError, outputBox);
+  container.append(label, configInput, validationError, outputBox, seeGithub);
   app.appendChild(container);
 
   updateOutput();
