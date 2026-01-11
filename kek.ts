@@ -8,6 +8,7 @@ class GingerEngine {
   private state: {
     currentStageIndex: number;
     currentStepIndex: number;
+    currentStepOrder: number;
     stageStartTime: number;
     results: StepOutcome[];
     isRunning: boolean;
@@ -29,6 +30,7 @@ class GingerEngine {
     this.state = {
       currentStageIndex: -1, // -1 means Intro/Welcome
       currentStepIndex: 0,
+      currentStepOrder: 0,
       stageStartTime: 0,
       results: [],
       isRunning: false,
@@ -163,6 +165,7 @@ class GingerEngine {
 
     this.waitForInput(() => {
       this.state.currentStepIndex = 0;
+      this.state.currentStepOrder = 0;
       this.state.stageStartTime = performance.now();
       this.state.isRunning = true;
       this.runStep(this.state.stageStartTime);
@@ -312,6 +315,7 @@ class GingerEngine {
       console.log(`Step: ${step.type} | Result: ${outcome}`);
       this.state.results.push({
         stageIndex: this.state.currentStageIndex,
+        stepOrder: ++this.state.currentStepOrder,
         stepIndex: this.state.currentStepIndex,
         type: step.type,
         outcome: outcome,
@@ -329,7 +333,12 @@ class GingerEngine {
     setTimeout(() => {
       this.textElement.innerText += '\n\n' + S().doneOverToExaminer;
       this.waitForInput(() => {
-        this.displayResults();
+        try {
+          this.displayResults();
+        } catch (err) {
+          console.error(err);
+          alert(err);
+        }
       });
     }, 5000);
   }
@@ -383,12 +392,78 @@ class GingerEngine {
   }
 
   private reportTimes() {
-    let report = 'time_ms,stage_idx,step_idx\n';
+    const hits: number[] = [];
+    let report = 'outcome,time_ms,stage_idx,step_number\n';
     for (const entry of this.state.results) {
-      report += `${entry.responseTimeMs ?? 'NONE'},${entry.stageIndex},${entry.stepIndex}\n`;
+      report += `${entry.outcome},${entry.responseTimeMs ?? 'NONE'},${entry.stageIndex},${entry.stepOrder}\n`;
+      if (entry.outcome === 'HIT') {
+        if (!entry.responseTimeMs) {
+          console.error('invalid data!', entry);
+          continue;
+        }
+        hits.push(entry.responseTimeMs);
+      }
     }
+
+    const s = calculateStats(hits);
+    report += `HIT,${s.mean},1,MEAN\n`;
+    report += `HIT,${s.stddev},1,STDDEV\n`;
+    report += `HIT,${s.p25},1,P25\n`;
+    report += `HIT,${s.median},1,MEDIAN\n`;
+    report += `HIT,${s.p75},1,P75\n`;
+
     return report;
   }
+}
+
+// https://stackoverflow.com/a/55297611 by https://stackoverflow.com/users/6070191/buboh
+// https://creativecommons.org/licenses/by-sa/4.0/
+function calculateStats(arr: number[]) {
+  if (arr.length === 0) {
+    return {
+      mean: 'NONE',
+      stddev: 'NONE',
+      p25: 'NONE',
+      median: 'NONE',
+      p75: 'NONE',
+    };
+  }
+  arr.sort((a, b) => a - b);
+
+  const sum = (arr: number[]) => arr.reduce((a, b) => a + b, 0);
+  const mean = sum(arr) / arr.length;
+
+  // sample standard deviation
+  const stddev = () => {
+    const diffArr = arr.map(a => (a - mean) ** 2);
+    return Math.sqrt(sum(diffArr) / (arr.length - 1));
+  };
+
+  const quantile = (q: number) => {
+    const pos = (arr.length - 1) * q;
+    const base = Math.floor(pos);
+    const rest = pos - base;
+    if (arr[base + 1] !== undefined) {
+      return arr[base] + rest * (arr[base + 1] - arr[base]);
+    } else {
+      return arr[base];
+    }
+  };
+
+  const median = () => {
+    if (arr.length % 2 == 1) {
+      return arr[(arr.length - 1) / 2];
+    }
+    return (arr[arr.length / 2] + arr[arr.length / 2 - 1]) / 2;
+  };
+
+  return {
+    mean: Math.round(mean * 100) / 100,
+    stddev: Math.round(stddev() * 100) / 100,
+    p25: quantile(.25),
+    median: median(),
+    p75: quantile(.75),
+  };
 }
 
 function addArtifact(el: HTMLElement, title: string, name: string, content: string) {

@@ -73,6 +73,7 @@ export const StepOutcomeValuesZod = z.enum(STEP_OUTCOME_VALS);
 
 export const StepOutcomeZod = z.object({
   stageIndex: z.number().int().min(0),
+  stepOrder: z.number().int().min(1),
   stepIndex: z.number().int().min(0),
   type: StepTypeZod,
   outcome: StepOutcomeValuesZod,
