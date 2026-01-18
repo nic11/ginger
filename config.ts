@@ -7,6 +7,12 @@ const CSS_COLOR_REGEX = /^#?[a-zA-Z0-9().,%\s]+$/;
 
 const BASE64_IMAGE_REGEX = /^data:image\/(png|jpeg|jpg|svg\+xml);base64,/;
 
+function runtimeField<T>() {
+  return z.custom<T>().transform(() => undefined);
+  //  ctx.addIssue({code: 'custom', message: 'This field is runtime-only and should not appear in a user-defined config'});
+  //});
+}
+
 export const StepTypeZod = z.enum(['GO', 'NOGO', 'BLOCK']);
 export type StepType = z.infer<typeof StepTypeZod>;
 
@@ -32,25 +38,24 @@ export const ResourceZod = z.object({
       });
     }
   }),
-  element: z.custom<HTMLImageElement>((val) => {
-    return typeof HTMLImageElement !== 'undefined' && val instanceof HTMLImageElement;
-  }).optional(),
+  element: runtimeField<HTMLImageElement>(),
 });
-export type Resource = z.infer<typeof ResourceZod>;
+export type Resource = z.infer<typeof ResourceZod> & {
+  element?: HTMLImageElement;
+};
 
-export const ParsedStepZod = z.object({
-  type: StepTypeZod,
-  durationMs: z.number().int().positive(),
-  originalString: z.string(),
-});
-export type ParsedStep = z.infer<typeof ParsedStepZod>;
+interface ParsedStep {
+  type: StepType;
+  durationMs: number;
+  originalString: string;
+}
 
 export const StageConfigZod = z.object({
   name: z.string().min(1),
   welcomeText: z.string(),
   totalTimeMs: z.number().int().min(0).optional(),  // absent or 0 for run-once
   steps: z.array(z.string().regex(/^[GNB][1-9][0-9]*$/)),
-  parsedSteps: z.array(ParsedStepZod).optional(),  // populated on init
+  parsedSteps: runtimeField<ParsedStep[]>(),  // populated on init
 });
 export type StageConfig = z.infer<typeof StageConfigZod>;
 
@@ -110,9 +115,16 @@ export function loadConfigFromUrl(): ParseResult {
   return result;
 }
 
-export function encodeUrlWithConfig(configStr: string): string {
-  const encodedConfig = encodeB64(configStr);
+export function encodeUrlWithConfig(configFull: string): string {
+  const configMin = JSON.stringify(GingerConfigZod.parse(JSON.parse(configFull)));
+  const encodedConfig = encodeB64(configMin);
   const baseUrl = `${window.location.protocol}//${window.location.host}${window.location.pathname}`;
   const fullUrl = `${baseUrl}#v1/${encodedConfig}`;
+  // TODO: убирать лишнюю говнину, предупреждать о лишних полях
+  // stddev NaN (1 hit?)
+  // precision 2 не везде. А хотя вообще везде до целых округлять?
+  // знак %
+  // отображение таблицами
+  // добавить возможность скачивать с номером/именем испытуемого в названии файла
   return fullUrl;
 }

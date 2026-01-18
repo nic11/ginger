@@ -533,13 +533,13 @@ function addArtifact(el: HTMLElement, title: string, name: string, content: stri
   saveBtn.onclick = () => {
     const blob = new Blob([content], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
-    
+
     const a = document.createElement('a');
     a.href = url;
     a.download = name;
     document.body.appendChild(a);
     a.click();
-    
+
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   };
@@ -712,3 +712,5 @@ window.onload = async () => {
   console.log(keke);
   console.log(decodeB64(keke));
 };
+
+window.onhashchange = () => alert("don't forget to refresh the page!");
