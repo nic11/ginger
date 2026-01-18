@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <!--
-  Built at 20260111 01 18
+  Built at 20260118 21 45
   from https://github.com/nic11/ginger/tree/...
   by job
 -->
@@ -12,7 +12,7 @@
     <style>html, body, #app {
   margin: 0;
   padding: 0;
-  height: 100%;
+  min-height: 100vh;
 }
 
 body, #app {
@@ -5741,6 +5741,8 @@ var en = {
   btnHide: "Hide",
   btnCopy: "Copy",
   btnSave: "Save",
+  filenameSuffix: "Add to filenames (e.g. participant alias):",
+  filenamePreview: "Filename preview:",
   seeGithub: `This project is licensed under GPLv3 license.
 You can find the code, list of dependencies, and help with translation (strings.ts) or report bugs using the link below:`
 };
@@ -5794,6 +5796,11 @@ function setLocale(locale) {
 // config.ts
 var CSS_COLOR_REGEX = /^#?[a-zA-Z0-9().,%\s]+$/;
 var BASE64_IMAGE_REGEX = /^data:image\/(png|jpeg|jpg|svg\+xml);base64,/;
+function runtimeField() {
+  return custom().transform(() => {
+    return;
+  });
+}
 var StepTypeZod = _enum(["GO", "NOGO", "BLOCK"]);
 var ResourceZod = object({
   type: literal("image"),
@@ -5816,21 +5823,14 @@ var ResourceZod = object({
       });
     }
   }),
-  element: custom((val) => {
-    return typeof HTMLImageElement !== "undefined" && val instanceof HTMLImageElement;
-  }).optional()
-});
-var ParsedStepZod = object({
-  type: StepTypeZod,
-  durationMs: number2().int().positive(),
-  originalString: string2()
+  element: runtimeField()
 });
 var StageConfigZod = object({
   name: string2().min(1),
   welcomeText: string2(),
   totalTimeMs: number2().int().min(0).optional(),
   steps: array(string2().regex(/^[GNB][1-9][0-9]*$/)),
-  parsedSteps: array(ParsedStepZod).optional()
+  parsedSteps: runtimeField()
 });
 var GingerConfigZod = object({
   lang: LocaleZod,
@@ -5872,8 +5872,9 @@ function loadConfigFromUrl() {
   }
   return result;
 }
-function encodeUrlWithConfig(configStr) {
-  const encodedConfig = encodeB64(configStr);
+function encodeUrlWithConfig(configFull) {
+  const configMin = JSON.stringify(GingerConfigZod.parse(JSON.parse(configFull)));
+  const encodedConfig = encodeB64(configMin);
   const baseUrl = `${window.location.protocol}//${window.location.host}${window.location.pathname}`;
   const fullUrl = `${baseUrl}#v1/${encodedConfig}`;
   return fullUrl;
@@ -5945,17 +5946,19 @@ class GingerEngine {
       zIndex: "100",
       lineHeight: "1"
     });
-    this.settingsBtn.onclick = () => {
-      this.settingsBtn.style.display = "none";
-      config2.go.element = config2.nogo.element = undefined;
-      renderEditConfigScreen(root, { config: config2 });
-    };
+    this.settingsBtn.onclick = () => this.openSettings();
     this.container.appendChild(this.textElement);
     this.container.appendChild(this.imageElement);
     this.container.appendChild(this.settingsBtn);
     this.handleInput = this.handleInput.bind(this);
     document.addEventListener("keydown", this.handleInput);
     this.parseConfig();
+  }
+  openSettings() {
+    this.settingsBtn.style.display = "none";
+    this.config.go.element = this.config.nogo.element = undefined;
+    renderEditConfigScreen(this.container, { config: this.config });
+    this.openSettings = () => {};
   }
   parseConfig() {
     this.config.stages.forEach((stage) => {
@@ -6003,6 +6006,7 @@ class GingerEngine {
     this.renderScreen(this.config.welcomeText, null);
     this.waitForInput(() => {
       this.settingsBtn.style.display = "none";
+      this.openSettings = () => {};
       this.renderScreen(S().thisIsGo, this.config.go.src);
       this.waitForInput(() => {
         this.renderScreen(S().thisIsNogo, this.config.nogo.src);
@@ -6074,6 +6078,10 @@ class GingerEngine {
     }
   }
   handleInput(e) {
+    if (e instanceof KeyboardEvent && e.code === "KeyO") {
+      this.openSettings();
+      return;
+    }
     if (e instanceof KeyboardEvent && e.code !== "Space" && e.code !== "Enter") {
       return;
     }
@@ -6116,7 +6124,7 @@ class GingerEngine {
     let outcome;
     let responseTimeMs = null;
     if (trigger === "INPUT") {
-      responseTimeMs = Math.round((timestamp - this.stepStartTime) * 10) / 10;
+      responseTimeMs = Math.round(timestamp - this.stepStartTime);
       if (step.type === "GO") {
         outcome = "HIT";
       } else if (step.type === "NOGO") {
@@ -6171,14 +6179,41 @@ class GingerEngine {
     }, 5000);
   }
   displayResults() {
-    this.textElement.innerText = S().doneHereAreResults;
-    const dt = formatDateNow("YYYYDDMM-HHmm");
-    addArtifact(this.textElement, S().rawResults, `ginger-raw-${dt}.json`, JSON.stringify({
+    this.textElement.innerText = "";
+    const timestamp = formatDateNow("YYYYDDMM-HHmm");
+    const suffixInputContainer = document.createElement("div");
+    const suffixLabel = document.createElement("span");
+    const suffixInput = document.createElement("input");
+    const previewContainer = document.createElement("div");
+    const previewLabel = document.createElement("span");
+    const filenamePreview = document.createElement("span");
+    const getSuffix = () => {
+      const val = suffixInput.value.trim();
+      return val ? `-${val}` : "";
+    };
+    const getRawFilename = () => `ginger-raw-${timestamp}${getSuffix()}.json`;
+    const getNumbersFilename = () => `ginger-numbers-${timestamp}${getSuffix()}.csv`;
+    const getTimesFilename = () => `ginger-times-${timestamp}${getSuffix()}.csv`;
+    suffixLabel.style.fontSize = "0.6em";
+    suffixLabel.style.marginRight = "0.3em";
+    suffixLabel.innerText = S().filenameSuffix;
+    suffixInput.oninput = () => {
+      filenamePreview.innerText = getTimesFilename();
+    };
+    suffixInputContainer.append(suffixLabel, suffixInput);
+    previewContainer.style.fontSize = "0.6em";
+    previewLabel.style.marginRight = "0.3em";
+    previewLabel.innerText = S().filenamePreview;
+    filenamePreview.innerText = getTimesFilename();
+    previewContainer.append(previewLabel, filenamePreview);
+    this.textElement.append(S().doneHereAreResults);
+    addArtifact(this.textElement, S().rawResults, getRawFilename, JSON.stringify({
       stageStartTimes: [this.state.stageStartTime],
       results: this.state.results
     }, null, 2));
-    addArtifact(this.textElement, S().resultsNumbers, `ginger-numbers-${dt}.csv`, this.reportNumbers());
-    addArtifact(this.textElement, S().resultsTimes, `ginger-times-${dt}.csv`, this.reportTimes());
+    addArtifact(this.textElement, S().resultsNumbers, getNumbersFilename, this.reportNumbers());
+    addArtifact(this.textElement, S().resultsTimes, getTimesFilename, this.reportTimes());
+    this.textElement.append(suffixInputContainer, previewContainer);
   }
   reportNumbers() {
     let report = `%,number,type
@@ -6191,7 +6226,7 @@ class GingerEngine {
       counts.set(entry.outcome, counts.get(entry.outcome) + 1);
     }
     for (const [outcome, num] of counts.entries()) {
-      report += `${Math.round(num / this.state.results.length * 100)},${num},${outcome}
+      report += `${Math.round(num / this.state.results.length * 100)}%,${num},${outcome}
 `;
     }
     report += `100,${this.state.results.length},TOTAL
@@ -6210,9 +6245,9 @@ class GingerEngine {
         }
       }
     }
-    report += `${Math.round(100 * cntGo / this.state.results.length)},${cntGo},TOTAL_GO
+    report += `${Math.round(100 * cntGo / this.state.results.length)}%,${cntGo},TOTAL_GO
 `;
-    report += `${Math.round(100 * cntNogo / this.state.results.length)},${cntNogo},TOTAL_NOGO
+    report += `${Math.round(100 * cntNogo / this.state.results.length)}%,${cntNogo},TOTAL_NOGO
 `;
     return report;
   }
@@ -6259,6 +6294,9 @@ function calculateStats(arr) {
   const sum = (arr2) => arr2.reduce((a, b) => a + b, 0);
   const mean = sum(arr) / arr.length;
   const stddev = () => {
+    if (arr.length < 2) {
+      return 0;
+    }
     const diffArr = arr.map((a) => (a - mean) ** 2);
     return Math.sqrt(sum(diffArr) / (arr.length - 1));
   };
@@ -6267,7 +6305,7 @@ function calculateStats(arr) {
     const base = Math.floor(pos);
     const rest = pos - base;
     if (arr[base + 1] !== undefined) {
-      return arr[base] + rest * (arr[base + 1] - arr[base]);
+      return Math.round(arr[base] + rest * (arr[base + 1] - arr[base]));
     } else {
       return arr[base];
     }
@@ -6276,11 +6314,11 @@ function calculateStats(arr) {
     if (arr.length % 2 == 1) {
       return arr[(arr.length - 1) / 2];
     }
-    return (arr[arr.length / 2] + arr[arr.length / 2 - 1]) / 2;
+    return Math.round((arr[arr.length / 2] + arr[arr.length / 2 - 1]) / 2);
   };
   return {
-    mean: Math.round(mean * 100) / 100,
-    stddev: Math.round(stddev() * 100) / 100,
+    mean: Math.round(mean),
+    stddev: Math.round(stddev()),
     p25: quantile(0.25),
     median: median(),
     p75: quantile(0.75)
@@ -6305,24 +6343,58 @@ function addArtifact(el, title, name, content) {
   const actionsEl = document.createElement("div");
   actionsEl.style.display = "flex";
   actionsEl.style.gap = "8px";
-  const pre = document.createElement("pre");
-  pre.textContent = content;
-  pre.style.display = "none";
-  pre.style.padding = "10px";
-  pre.style.margin = "0";
-  pre.style.overflowX = "auto";
-  pre.style.overflowY = "scroll";
-  pre.style.height = "200px";
-  pre.style.fontSize = `0.5em`;
-  pre.style.textAlign = "left";
+  const makePre = () => {
+    const pre = document.createElement("pre");
+    pre.textContent = content;
+    pre.style.fontSize = `0.5em`;
+    pre.style.textAlign = "left";
+    return pre;
+  };
+  const makeTable = () => {
+    const div = document.createElement("div");
+    applyStyles(div, {
+      display: "flex",
+      flexDirection: "column",
+      alignItems: "center",
+      justifyContent: "center",
+      overview: "auto scroll",
+      fontSize: "0.7em"
+    });
+    const tbl = document.createElement("table");
+    tbl.style.margin = "0 auto";
+    tbl.style.textAlign = "center";
+    for (let line of content.split(`
+`)) {
+      line = line.trim();
+      if (line.length === 0) {
+        break;
+      }
+      const tr = document.createElement("tr");
+      for (const col of line.split(",")) {
+        const td = document.createElement("td");
+        td.append(col);
+        tr.append(td);
+      }
+      tbl.append(tr);
+    }
+    div.append(tbl);
+    return div;
+  };
+  const data = name().endsWith(".csv") ? makeTable() : makePre();
+  data.style.display = "none";
+  data.style.padding = "10px";
+  data.style.margin = "0";
+  data.style.overflowX = "auto";
+  data.style.overflowY = "scroll";
+  data.style.height = "200px";
   const toggleBtn = document.createElement("button");
   toggleBtn.textContent = S().btnShow;
   toggleBtn.onclick = () => {
-    if (pre.style.display === "none") {
-      pre.style.display = "block";
+    if (data.style.display === "none") {
+      data.style.display = "block";
       toggleBtn.textContent = S().btnHide;
     } else {
-      pre.style.display = "none";
+      data.style.display = "none";
       toggleBtn.textContent = S().btnShow;
     }
   };
@@ -6348,7 +6420,7 @@ function addArtifact(el, title, name, content) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = name;
+    a.download = name();
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -6360,7 +6432,7 @@ function addArtifact(el, title, name, content) {
   header.appendChild(titleEl);
   header.appendChild(actionsEl);
   container.appendChild(header);
-  container.appendChild(pre);
+  container.appendChild(data);
   el.appendChild(container);
 }
 var applyStyles = (el, styles) => Object.assign(el.style, styles);
@@ -6380,7 +6452,7 @@ function renderEditConfigScreen(app, result) {
   const configInput = document.createElement("textarea");
   configInput.rows = 15;
   if (config2) {
-    configInput.value = JSON.stringify(config2, null, 2);
+    configInput.value = JSON.stringify(GingerConfigZod.parse(config2), null, 2);
   } else {
     configInput.value = decodedHash ?? "";
   }
@@ -6494,6 +6566,7 @@ window.onload = async () => {
   console.log(keke);
   console.log(decodeB64(keke));
 };
+window.onhashchange = () => location.reload();
 </script>
 </body>
 </html>
