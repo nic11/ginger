@@ -19,6 +19,8 @@ const en = {
   btnHide: 'Hide',
   btnCopy: 'Copy',
   btnSave: 'Save',
+  filenameSuffix: 'Add to filenames (e.g. participant alias):',
+  filenamePreview: 'Filename preview:',
   seeGithub: 'This project is licensed under GPLv3 license.\nYou can find the code, list of dependencies, and help with translation (strings.ts) or report bugs using the link below:',
 };
 

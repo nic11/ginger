@@ -71,11 +71,7 @@ class GingerEngine {
       zIndex: '100',
       lineHeight: '1',
     });
-    this.settingsBtn.onclick = () => {
-      this.settingsBtn.style.display = 'none';
-      config.go.element = config.nogo.element = undefined;
-      renderEditConfigScreen(root, { config });
-    };
+    this.settingsBtn.onclick = () => this.openSettings();
 
     this.container.appendChild(this.textElement);
     this.container.appendChild(this.imageElement);
@@ -83,9 +79,15 @@ class GingerEngine {
 
     this.handleInput = this.handleInput.bind(this);
     document.addEventListener('keydown', this.handleInput);
-    // document.addEventListener('mousedown', this.handleInput);
 
     this.parseConfig();
+  }
+
+  private openSettings() {
+    this.settingsBtn.style.display = 'none';
+    this.config.go.element = this.config.nogo.element = undefined;
+    renderEditConfigScreen(this.container, { config: this.config });
+    this.openSettings = () => {};
   }
 
   private parseConfig() {
@@ -139,6 +141,7 @@ class GingerEngine {
 
     this.waitForInput(() => {
       this.settingsBtn.style.display = 'none';
+      this.openSettings = () => {};
       this.renderScreen(S().thisIsGo, this.config.go.src);
 
       this.waitForInput(() => {
@@ -230,6 +233,11 @@ class GingerEngine {
   }
 
   private handleInput(e: KeyboardEvent | MouseEvent) {
+    if (e instanceof KeyboardEvent && e.code === 'KeyO') {
+      this.openSettings();  // noop after first interaction
+      return;
+    }
+
     if (e instanceof KeyboardEvent && e.code !== 'Space' && e.code !== 'Enter') {
       return;
     }
@@ -285,7 +293,7 @@ class GingerEngine {
     let responseTimeMs: number | null = null;
 
     if (trigger === 'INPUT') {
-      responseTimeMs = Math.round((timestamp - this.stepStartTime) * 10) / 10; // Placeholder, see note below on precision
+      responseTimeMs = Math.round((timestamp - this.stepStartTime));
 
       if (step.type === 'GO') {
         outcome = 'HIT';
@@ -344,14 +352,60 @@ class GingerEngine {
   }
 
   private displayResults() {
-    this.textElement.innerText = S().doneHereAreResults;
-    const dt = formatDateNow('YYYYDDMM-HHmm');
-    addArtifact(this.textElement, S().rawResults, `ginger-raw-${dt}.json`, JSON.stringify({
-      stageStartTimes: [ this.state.stageStartTime ],
-      results: this.state.results,
-    }, null, 2));
-    addArtifact(this.textElement, S().resultsNumbers, `ginger-numbers-${dt}.csv`, this.reportNumbers());
-    addArtifact(this.textElement, S().resultsTimes, `ginger-times-${dt}.csv`, this.reportTimes());
+    this.textElement.innerText = '';
+
+    const timestamp = formatDateNow('YYYYDDMM-HHmm');
+
+    const suffixInputContainer = document.createElement('div');
+    const suffixLabel = document.createElement('span');
+    const suffixInput = document.createElement('input');
+
+    const previewContainer = document.createElement('div');
+    const previewLabel = document.createElement('span');
+    const filenamePreview = document.createElement('span');
+
+    const getSuffix = (): string => {
+      const val = suffixInput.value.trim();
+      return val ? `-${val}` : '';
+    };
+
+    const getRawFilename = () => `ginger-raw-${timestamp}${getSuffix()}.json`;
+    const getNumbersFilename = () => `ginger-numbers-${timestamp}${getSuffix()}.csv`;
+    const getTimesFilename = () => `ginger-times-${timestamp}${getSuffix()}.csv`;
+
+    suffixLabel.style.fontSize = '0.6em';
+    suffixLabel.style.marginRight = '0.3em';
+    suffixLabel.innerText = S().filenameSuffix;
+
+    suffixInput.oninput = () => {
+      filenamePreview.innerText = getTimesFilename();
+    };
+
+    suffixInputContainer.append(suffixLabel, suffixInput);
+
+    previewContainer.style.fontSize = '0.6em';
+    previewLabel.style.marginRight = '0.3em';
+    previewLabel.innerText = S().filenamePreview;
+    filenamePreview.innerText = getTimesFilename();
+
+    previewContainer.append(previewLabel, filenamePreview);
+
+    this.textElement.append(S().doneHereAreResults);
+
+    addArtifact(
+      this.textElement,
+      S().rawResults,
+      getRawFilename,
+      JSON.stringify({
+        stageStartTimes: [this.state.stageStartTime],
+        results: this.state.results,
+      }, null, 2),
+    );
+    addArtifact(this.textElement, S().resultsNumbers, getNumbersFilename, this.reportNumbers());
+    addArtifact(this.textElement, S().resultsTimes, getTimesFilename, this.reportTimes());
+
+    this.textElement.append(suffixInputContainer, previewContainer);
+
     // TODO: save all (zip)
   }
 
@@ -365,7 +419,7 @@ class GingerEngine {
       counts.set(entry.outcome, counts.get(entry.outcome)! + 1)
     }
     for (const [outcome, num] of counts.entries()) {
-      report += `${Math.round(num / this.state.results.length * 100)},${num},${outcome}\n`;
+      report += `${Math.round(num / this.state.results.length * 100)}%,${num},${outcome}\n`;
     }
     report += `100,${this.state.results.length},TOTAL\n`;
 
@@ -385,8 +439,8 @@ class GingerEngine {
       }
     }
 
-    report += `${Math.round(100 * cntGo / this.state.results.length)},${cntGo},TOTAL_GO\n`;
-    report += `${Math.round(100 * cntNogo / this.state.results.length)},${cntNogo},TOTAL_NOGO\n`;
+    report += `${Math.round(100 * cntGo / this.state.results.length)}%,${cntGo},TOTAL_GO\n`;
+    report += `${Math.round(100 * cntNogo / this.state.results.length)}%,${cntNogo},TOTAL_NOGO\n`;
 
     return report;
   }
@@ -435,6 +489,9 @@ function calculateStats(arr: number[]) {
 
   // sample standard deviation
   const stddev = () => {
+    if (arr.length < 2) {
+      return 0;
+    }
     const diffArr = arr.map(a => (a - mean) ** 2);
     return Math.sqrt(sum(diffArr) / (arr.length - 1));
   };
@@ -444,7 +501,7 @@ function calculateStats(arr: number[]) {
     const base = Math.floor(pos);
     const rest = pos - base;
     if (arr[base + 1] !== undefined) {
-      return arr[base] + rest * (arr[base + 1] - arr[base]);
+      return Math.round(arr[base] + rest * (arr[base + 1] - arr[base]));
     } else {
       return arr[base];
     }
@@ -454,19 +511,19 @@ function calculateStats(arr: number[]) {
     if (arr.length % 2 == 1) {
       return arr[(arr.length - 1) / 2];
     }
-    return (arr[arr.length / 2] + arr[arr.length / 2 - 1]) / 2;
+    return Math.round((arr[arr.length / 2] + arr[arr.length / 2 - 1]) / 2);
   };
 
   return {
-    mean: Math.round(mean * 100) / 100,
-    stddev: Math.round(stddev() * 100) / 100,
+    mean: Math.round(mean),
+    stddev: Math.round(stddev()),
     p25: quantile(.25),
     median: median(),
     p75: quantile(.75),
   };
 }
 
-function addArtifact(el: HTMLElement, title: string, name: string, content: string) {
+function addArtifact(el: HTMLElement, title: string, name: () => string, content: string) {
   const container = document.createElement('div');
   container.style.border = '1px solid #333';
   container.style.marginBottom = '10px';
@@ -489,25 +546,59 @@ function addArtifact(el: HTMLElement, title: string, name: string, content: stri
   actionsEl.style.display = 'flex';
   actionsEl.style.gap = '8px';
 
-  const pre = document.createElement('pre');
-  pre.textContent = content;
-  pre.style.display = 'none'; // Initially hidden
-  pre.style.padding = '10px';
-  pre.style.margin = '0';
-  pre.style.overflowX = 'auto';
-  pre.style.overflowY = 'scroll';
-  pre.style.height = '200px';
-  pre.style.fontSize = `0.5em`;
-  pre.style.textAlign = 'left';
+  const makePre = () => {
+    const pre = document.createElement('pre');
+    pre.textContent = content;
+    pre.style.fontSize = `0.5em`;
+    pre.style.textAlign = 'left';
+    return pre;
+  };
+  const makeTable = () => {
+    const div = document.createElement('div');
+    applyStyles(div, {
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      justifyContent: 'center',
+      overview: 'auto scroll',
+      fontSize: '0.7em',
+    });
+    const tbl = document.createElement('table');
+    tbl.style.margin = '0 auto';
+    tbl.style.textAlign = 'center';
+    for (let line of content.split('\n')) {
+      line = line.trim();
+      if (line.length === 0) {
+        break;
+      }
+
+      const tr = document.createElement('tr');
+      for (const col of line.split(',')) {
+        const td = document.createElement('td');
+        td.append(col);
+        tr.append(td);
+      }
+      tbl.append(tr);
+    }
+    div.append(tbl);
+    return div;
+  };
+  const data = name().endsWith('.csv') ? makeTable() : makePre();
+  data.style.display = 'none';
+  data.style.padding = '10px';
+  data.style.margin = '0';
+  data.style.overflowX = 'auto';
+  data.style.overflowY = 'scroll';
+  data.style.height = '200px';
 
   const toggleBtn = document.createElement('button');
   toggleBtn.textContent = S().btnShow;
   toggleBtn.onclick = () => {
-    if (pre.style.display === 'none') {
-      pre.style.display = 'block';
+    if (data.style.display === 'none') {
+      data.style.display = 'block';
       toggleBtn.textContent = S().btnHide;
     } else {
-      pre.style.display = 'none';
+      data.style.display = 'none';
       toggleBtn.textContent = S().btnShow;
     }
   };
@@ -533,13 +624,13 @@ function addArtifact(el: HTMLElement, title: string, name: string, content: stri
   saveBtn.onclick = () => {
     const blob = new Blob([content], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
-    
+
     const a = document.createElement('a');
     a.href = url;
-    a.download = name;
+    a.download = name();
     document.body.appendChild(a);
     a.click();
-    
+
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   };
@@ -552,7 +643,7 @@ function addArtifact(el: HTMLElement, title: string, name: string, content: stri
   header.appendChild(actionsEl);
 
   container.appendChild(header);
-  container.appendChild(pre);
+  container.appendChild(data);
 
   el.appendChild(container);
 }
@@ -578,7 +669,7 @@ function renderEditConfigScreen(app: HTMLElement, result: ParseResult) {
   const configInput = document.createElement('textarea');
   configInput.rows = 15;
   if (config) {
-    configInput.value = JSON.stringify(config, null, 2);
+    configInput.value = JSON.stringify(GingerConfigZod.parse(config), null, 2);
   } else {
     configInput.value = decodedHash ?? '';
   }
@@ -712,3 +803,5 @@ window.onload = async () => {
   console.log(keke);
   console.log(decodeB64(keke));
 };
+
+window.onhashchange = () => location.reload();
